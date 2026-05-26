@@ -9,7 +9,6 @@ WIDTH = 1100
 HEIGHT = 650
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-
 def check_bound(obj_rct: pg.Rect) -> tuple[bool, bool]:
     yoko, tate = True, True
     if obj_rct.left < 0 or WIDTH < obj_rct.right:
@@ -17,7 +16,6 @@ def check_bound(obj_rct: pg.Rect) -> tuple[bool, bool]:
     if obj_rct.top < 0 or HEIGHT < obj_rct.bottom:
         tate = False
     return yoko, tate
-
 
 def draw_heart_surface(size: int, color: tuple) -> pg.Surface:
     surf = pg.Surface((size, size), pg.SRCALPHA)
@@ -34,7 +32,6 @@ def draw_heart_surface(size: int, color: tuple) -> pg.Surface:
     ]
     pg.draw.polygon(surf, color, points)
     return surf
-
 
 class Life:
     HEART_SIZE = 50
@@ -107,7 +104,6 @@ class Life:
         for p in self._kakera:
             pg.draw.circle(screen, p["color"], (int(p["x"]), int(p["y"])), p["size"])
 
-
 class Player(pg.sprite.Sprite):
     delta = {
         pg.K_UP: (0, -1),
@@ -154,11 +150,6 @@ class Player(pg.sprite.Sprite):
 
         self.stamina = max(0, min(self.stamina, self.max_stamina))
 
-        # self.rect.move_ip(self.speed * sum_mv[0], self.speed * sum_mv[1])
-
-        # if check_bound(self.rect) != (True, True):
-        #     self.rect.move_ip(-self.speed * sum_mv[0], -self.speed * sum_mv[1])
-
         # if moving:
         actually_moved = False  # 実際に移動できたかを追跡する変数
 
@@ -189,7 +180,6 @@ class Player(pg.sprite.Sprite):
             self.move_flag = False
             # 足音停止
             self.walk_se.stop()
-
 
 class Obstacle(pg.sprite.Sprite):
     """
@@ -224,7 +214,7 @@ class Oni(pg.sprite.Sprite):
         # 前回の配置座標を記憶するリスト
         self.prev_positions = []
 
-    def generate_obstacles(self, obstacles_group: pg.sprite.Group):
+    def generate_obstacles(self, obstacles_group: pg.sprite.Group, player: Player):
         """
         ランダムな遮蔽物を生成する
         """
@@ -236,7 +226,7 @@ class Oni(pg.sprite.Sprite):
 
         attempts = 0
         while len(new_positions) < num_obstacles and attempts < 100:    #もし100回試しても条件を満たす配置ができない時はあきらめる
-
+            attempts += 1
             #出現エリアを 200 ～ 900 に制限
             x = random.randint(200, 900 - 30)
             #出現エリアを 50 ～ 480 に制限
@@ -255,6 +245,11 @@ class Oni(pg.sprite.Sprite):
                     too_close = True
                     break
 
+            # プレイヤーとの距離チェック
+            p_cx, p_cy = player.rect.center
+            if math.hypot(p_cx - x, p_cy - y) < 150:
+                too_close = True
+
             if not too_close:
                 new_positions.append((x, y))
                 obs = Obstacle(x, y)
@@ -263,7 +258,7 @@ class Oni(pg.sprite.Sprite):
         # 今回の配置を次回の1つ前の場所として記憶する
         self.prev_positions = new_positions
 
-    def update(self, obstacles_group: pg.sprite.Group, n:int, turn_min:int, turn_max: int):
+    def update(self, obstacles_group: pg.sprite.Group, player: Player, n: int, turn_min: int, turn_max: int):
         """
         鬼更新
         """
@@ -282,12 +277,11 @@ class Oni(pg.sprite.Sprite):
                 self.image = self.image_back
 
                 # 後ろを向いたら遮蔽物をリフレッシュ
-                self.generate_obstacles(obstacles_group)
+                self.generate_obstacles(obstacles_group, player)
 
                 # 音声再生
                 self.voice.play(-1)
                 self.next_turn = now + random.uniform(turn_min, turn_max) #stageごとの難易度
-
 
 #爆弾クラスの追加
 class Bomb(pg.sprite.Sprite):
@@ -325,8 +319,8 @@ def check_hidden(player: Player, obstacles: pg.sprite.Group) -> bool:
     REQUIRED_OVERLAP = 35  # プレイヤーの体のうち、縦に35ピクセル以上が遮蔽物の高さの中に収まっていればセーフ
 
     for obs in obstacles:
-        # プレイヤーが遮蔽物より左側にいる
-        if player.rect.right >= obs.rect.left:
+        # プレイヤーの中心が遮蔽物より左側にある
+        if player.rect.centerx >= obs.rect.left:
             continue
 
         # 上下の重なり合っている部分の高さを求める
@@ -368,7 +362,7 @@ def gameover(screen):
 def clear(screen):
     fonto = pg.font.Font(None, 80)
     txt = fonto.render("Clear!", True, (0, 255, 0))
-    screen.blit(txt, [WIDTH // 2 - 150, HEIGHT // 2])
+    screen.blit(txt, [WIDTH // 2 - 100, HEIGHT // 2])
 
 def draw_stamina(screen: pg.Surface, player: Player):
     pg.draw.rect(screen, (255, 255, 255), [20, 20, 200, 20])
@@ -377,10 +371,13 @@ def draw_stamina(screen: pg.Surface, player: Player):
     draw_text(screen, "STAMINA", 30, (255, 255, 255), (120, 55))
 
 
+# ステージ難易度パラメータ
 n = 3
 turn_min = 5
 turn_max = 15
+
 def main():
+    pg.mixer.stop()  # 前ステージの残留音声を全停止（二重再生防止）
     pg.display.set_caption("こうかとんが転んだ")
     screen = pg.display.set_mode((WIDTH, HEIGHT))
     clock = pg.time.Clock()
@@ -404,8 +401,8 @@ def main():
 
     start_time = time.time()
 
-    obstacles = pg.sprite.Group()       # 遮蔽物を管理するグループ
-    oni.generate_obstacles(obstacles)   # 初回スタート時の遮蔽物生成
+    obstacles = pg.sprite.Group()               # 遮蔽物を管理するグループ
+    oni.generate_obstacles(obstacles, player)   # 初回スタート時の遮蔽物生成
 
     while True:
         dt = clock.tick(50)
@@ -429,7 +426,7 @@ def main():
         
         t = time.time()
         if t >= stop_time:
-            oni.update(obstacles, n, turn_min, turn_max)
+            oni.update(obstacles, player, n, turn_min, turn_max)
 
         life.update(dt)
 
@@ -438,10 +435,13 @@ def main():
         screen.blit(player.image, player.rect)
         screen.blit(oni.image, oni.rect)
         
-        if n>=4: #1回クリア後、爆弾が現れる
+        # 経過時間
+        elapsed = int(time.time() - start_time)
+
+        if n >= 4: #1回クリア後、爆弾が現れる
             bomb_time += 1
-            if bomb_time %500 == 0:
-                for bomb in range(n+2):
+            if bomb_time % 500 == 0:
+                for bomb in range(n + 2):
                     bombs.add(Bomb(200))
                     pg.display.update()
             
@@ -454,38 +454,15 @@ def main():
                     time.sleep(3)
                     return
 
-        # 経過時間
-        elapsed = int(time.time() - start_time)
-        draw_text(screen, f"Time: {elapsed}", 40, (255, 255, 255), (100, 30))
+        # カウントダウン（60秒制限）
+        remaining = max(0, 60 - elapsed)
+        draw_text(screen, f"Time: {remaining}", 40, (255, 255, 255), (600, 30))
 
         # クールタイム
         cd = max(0, int(cooldown_end - time.time()))
         draw_text(screen, f"Skill CD: {cd}", 40, (255, 255, 0), (300, 30))
 
-        # 経過時間
-        elapsed = int(time.time() - start_time)
-        draw_text(screen, f"Time: {elapsed}", 40, (255, 255, 255), (100, 30))
-
-        # クールタイム
-        cd = max(0, int(cooldown_end - time.time()))
-        draw_text(screen, f"Skill CD: {cd}", 40, (255, 255, 0), (300, 30))
         draw_stamina(screen, player)
-        
-        if n>=4: #1回クリア後、爆弾が現れる
-            bomb_time += 1
-            if bomb_time %500 == 0:
-                for bomb in range(n+2):
-                    bombs.add(Bomb(200))
-                    pg.display.update()
-            
-            for bomb in bombs:
-                crash = bomb.update(player)
-                screen.blit(bomb.image, bomb.rect)
-                if crash == "boom":
-                    gameover(screen)
-                    pg.display.update()
-                    time.sleep(3)
-                    return
 
         # ゲームオーバー判定
         if oni.look_flag and player.move_flag:
@@ -513,12 +490,11 @@ def main():
         life.draw(screen, now)
         pg.display.update()
 
-
 if __name__ == "__main__":
     pg.init()
     while True:
         ret = main()
-        if ret == "clear": #追加
+        if ret == "clear":
             n += 1
             if turn_min > 1:
                 turn_max -= 2
