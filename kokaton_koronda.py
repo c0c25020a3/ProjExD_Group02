@@ -263,7 +263,7 @@ class Oni(pg.sprite.Sprite):
         # 今回の配置を次回の1つ前の場所として記憶する
         self.prev_positions = new_positions
 
-    def update(self, obstacles_group: pg.sprite.Group):
+    def update(self, obstacles_group: pg.sprite.Group, n:int, turn_min:int, turn_max: int):
         """
         鬼更新
         """
@@ -275,7 +275,7 @@ class Oni(pg.sprite.Sprite):
                 self.look_flag = True
                 self.image = self.image_front
                 self.voice.stop()
-                self.next_turn = now + 3
+                self.next_turn = now + n #stageごとの難易度
         else:
             if now >= self.next_turn:
                 self.look_flag = False
@@ -286,7 +286,37 @@ class Oni(pg.sprite.Sprite):
 
                 # 音声再生
                 self.voice.play(-1)
-                self.next_turn = now + random.uniform(5, 15)
+                self.next_turn = now + random.uniform(turn_min, turn_max) #stageごとの難易度
+
+
+#爆弾クラスの追加
+class Bomb(pg.sprite.Sprite):
+    def __init__(self, life:int):
+        super().__init__()
+        rad = 40
+        self.image = pg.Surface((2*rad, 2*rad))
+        pg.draw.circle(self.image,(255,0,0),(rad, rad), rad)
+        self.image.set_colorkey((0, 0, 0))
+        self.image.set_alpha(200)
+        self.rect = self.image.get_rect()
+        centerx = random.randint(0,WIDTH)
+        centery = random.randint(0,HEIGHT)
+        self.rect.center = centerx, centery
+        self.life = life
+        
+    def update(self, player):
+        self.life -= 1
+        if self.life <= 0:
+            if self.rect.colliderect(player.rect):
+                return "boom"
+            self.kill()
+        elif self.life <= 3:
+            self.image.set_alpha(255)
+        elif self.life %30 >= 15:
+            self.image.set_alpha(0)
+        else:
+            self.image.set_alpha(120)
+            
 
 def check_hidden(player: Player, obstacles: pg.sprite.Group) -> bool:
     """
@@ -347,22 +377,23 @@ def draw_stamina(screen: pg.Surface, player: Player):
     draw_text(screen, "STAMINA", 30, (255, 255, 255), (120, 55))
 
 
+n = 3
+turn_min = 5
+turn_max = 15
 def main():
     pg.display.set_caption("こうかとんが転んだ")
     screen = pg.display.set_mode((WIDTH, HEIGHT))
     clock = pg.time.Clock()
-
     bg_img = pg.image.load("fig/pg_bg.jpg")
-
     loaded_img = pg.image.load("fig/block.png")
     Obstacle.BLOCK_IMAGE = pg.transform.scale(
         loaded_img, (Obstacle.WIDTH, Obstacle.HEIGHT)
     )
-
     player = Player()
     oni = Oni()
     life = Life(num=3)
-
+    bombs = pg.sprite.Group()
+    bomb_time = 0
     muteki_time = 0
 
     # 時間停止スキル
@@ -394,12 +425,11 @@ def main():
                     cooldown_end = t + COOLDOWN
 
         screen.blit(bg_img, [0, 0])
-
         player.update(key_lst, obstacles)
-
+        
         t = time.time()
         if t >= stop_time:
-            oni.update(obstacles)
+            oni.update(obstacles, n, turn_min, turn_max)
 
         life.update(dt)
 
@@ -407,6 +437,22 @@ def main():
         obstacles.draw(screen)
         screen.blit(player.image, player.rect)
         screen.blit(oni.image, oni.rect)
+        
+        if n>=4: #1回クリア後、爆弾が現れる
+            bomb_time += 1
+            if bomb_time %500 == 0:
+                for bomb in range(n+2):
+                    bombs.add(Bomb(200))
+                    pg.display.update()
+            
+            for bomb in bombs:
+                crash = bomb.update(player)
+                screen.blit(bomb.image, bomb.rect)
+                if crash == "boom":
+                    gameover(screen)
+                    pg.display.update()
+                    time.sleep(3)
+                    return
 
         # 経過時間
         elapsed = int(time.time() - start_time)
@@ -416,7 +462,30 @@ def main():
         cd = max(0, int(cooldown_end - time.time()))
         draw_text(screen, f"Skill CD: {cd}", 40, (255, 255, 0), (300, 30))
 
+        # 経過時間
+        elapsed = int(time.time() - start_time)
+        draw_text(screen, f"Time: {elapsed}", 40, (255, 255, 255), (100, 30))
+
+        # クールタイム
+        cd = max(0, int(cooldown_end - time.time()))
+        draw_text(screen, f"Skill CD: {cd}", 40, (255, 255, 0), (300, 30))
         draw_stamina(screen, player)
+        
+        if n>=4: #1回クリア後、爆弾が現れる
+            bomb_time += 1
+            if bomb_time %500 == 0:
+                for bomb in range(n+2):
+                    bombs.add(Bomb(200))
+                    pg.display.update()
+            
+            for bomb in bombs:
+                crash = bomb.update(player)
+                screen.blit(bomb.image, bomb.rect)
+                if crash == "boom":
+                    gameover(screen)
+                    pg.display.update()
+                    time.sleep(3)
+                    return
 
         # ゲームオーバー判定
         if oni.look_flag and player.move_flag:
@@ -439,7 +508,7 @@ def main():
             clear(screen)
             pg.display.update()
             time.sleep(3)
-            return
+            return "clear"
 
         life.draw(screen, now)
         pg.display.update()
@@ -449,7 +518,12 @@ if __name__ == "__main__":
     pg.init()
     while True:
         ret = main()
-        if ret != "restart":
+        if ret == "clear": #追加
+            n += 1
+            if turn_min > 1:
+                turn_max -= 2
+                turn_min -= 1
+        elif ret != "restart":
             break
     pg.quit()
     sys.exit()
